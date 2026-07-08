@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>일일보고</title>
+<style>
+  body { font-family: -apple-system, 'Malgun Gothic', sans-serif; max-width: 480px; margin: 0 auto; padding: 16px; color: #111; }
+  h1 { font-size: 17px; margin: 8px 0 2px; }
+  .sub { font-size: 12px; color: #777; margin-bottom: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 5px 8px; border-bottom: 1px solid #eee; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: #777; font-weight: 600; border-bottom: 1px solid #ccc; }
+  tr.total td { font-weight: 700; border-top: 1px solid #ccc; }
+  .memo { font-size: 13px; margin-top: 14px; white-space: pre-wrap; }
+  .status { font-size: 13px; color: #777; margin-top: 30px; text-align: center; }
+</style>
+</head>
+<body>
+  <h1>일일보고 <span id="date"></span></h1>
+  <div class="sub" id="meta"></div>
+  <div id="content" style="display:none">
+    <table>
+      <thead><tr><th>월</th><th>건수</th><th>금액</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="memo" id="memo"></div>
+  </div>
+  <div class="status" id="status">불러오는 중...</div>
+
+<script>
+(async function () {
+  const params = new URLSearchParams(location.search);
+  const k = params.get('k') || '';
+  const date = params.get('date');
+  const url = date ? `/api/reports/${date}?k=${encodeURIComponent(k)}`
+                   : `/api/reports/latest?k=${encodeURIComponent(k)}`;
+  const statusEl = document.getElementById('status');
+  try {
+    const resp = await fetch(url);
+    if (resp.status === 403) { statusEl.textContent = '접근 권한이 없습니다.'; return; }
+    const data = await resp.json();
+    if (!data.success) { statusEl.textContent = data.error || '조회 실패'; return; }
+
+    const r = data.report;
+    document.getElementById('date').textContent = r.report_date;
+    document.getElementById('meta').textContent =
+      `${r.year || r.report_date.slice(0, 4)}년 월별 집계 · 업데이트 ${(data.received_at || '').slice(0, 16).replace('T', ' ')}`;
+
+    const cnt = r.cnt || [], amt = r.amt || [];
+    const tbody = document.getElementById('rows');
+    let sumC = 0, sumA = 0;
+    for (let m = 0; m < 12; m++) {
+      const c = cnt[m] || 0, a = amt[m] || 0;
+      sumC += c; sumA += a;
+      if (!c && !a) continue;  // 데이터 없는 월은 생략
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${m + 1}월</td><td>${c.toLocaleString()}</td><td>${a.toLocaleString()}</td>`;
+      tbody.appendChild(tr);
+    }
+    const trTotal = document.createElement('tr');
+    trTotal.className = 'total';
+    trTotal.innerHTML = `<td>합계</td><td>${sumC.toLocaleString()}</td><td>${sumA.toLocaleString()}</td>`;
+    tbody.appendChild(trTotal);
+
+    document.getElementById('memo').textContent = r.memo || '';
+    document.getElementById('content').style.display = 'block';
+    statusEl.textContent = '';
+  } catch (e) {
+    statusEl.textContent = '서버에 연결할 수 없습니다.';
+  }
+})();
+</script>
+</body>
+</html>
