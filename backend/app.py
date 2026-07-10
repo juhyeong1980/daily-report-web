@@ -40,6 +40,13 @@ def _get_conn():
             received_at TEXT NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS oauth_pending (
+            state      TEXT PRIMARY KEY,
+            code       TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
     return conn
 
 
@@ -99,6 +106,77 @@ def list_reports():
     rows = conn.execute('SELECT report_date FROM reports ORDER BY report_date DESC LIMIT 60').fetchall()
     conn.close()
     return jsonify({'success': True, 'dates': [r['report_date'] for r in rows]})
+
+
+# ─────────────────────────────────────────────── 카카오 OAuth 중계 (원격 직원 등록)
+# 병원 PC가 등록 링크의 state를 사전 등록 → 직원 폰에서 카카오 로그인 →
+# 카카오가 인가코드를 /oauth로 전달 → 병원 PC가 폴링으로 코드를 회수해 토큰 교환.
+# 이 서버는 코드를 잠깐 보관만 하며 REST 키·토큰은 전혀 다루지 않는다.
+
+@app.route('/api/oauth-states', methods=['POST'])
+def register_oauth_state():
+    """병원 PC 전용 — 등록 링크 발급 시 state 사전 등록."""
+    if not API_KEY or request.headers.get('X-Api-Key') != API_KEY:
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    state = (body.get('state') or '').strip()
+    if not (20 <= len(state) <= 128):
+        return jsonify({'success': False, 'error': 'state 형식 오류'}), 400
+    conn = _get_conn()
+    # 30분 지난 대기 항목 청소
+    cutoff = (datetime.now(KST) - timedelta(minutes=30)).isoformat()
+    conn.execute('DELETE FROM oauth_pending WHERE created_at < ?', (cutoff,))
+    conn.execute(
+        'INSERT OR REPLACE INTO oauth_pending (state, code, created_at) VALUES (?, NULL, ?)',
+        (state, datetime.now(KST).isoformat()))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
+
+
+@app.route('/oauth')
+def oauth_callback():
+    """카카오 로그인 후 직원 폰이 도착하는 곳 — 인가코드를 보관만 한다."""
+    code = request.args.get('code', '')
+    state = request.args.get('state', '')
+    page = ('<!doctype html><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            '<body style="font-family:-apple-system,\'Malgun Gothic\',sans-serif;'
+            'text-align:center;padding:60px 20px;color:#1c1c1e;">{msg}</body>')
+    if not code or not state:
+        return page.format(msg='<h3>인증 정보가 없습니다</h3><p>등록 링크를 다시 요청하세요.</p>'), 400
+    conn = _get_conn()
+    row = conn.execute('SELECT state FROM oauth_pending WHERE state=? AND code IS NULL',
+                       (state,)).fetchone()
+    if row is None:
+        conn.close()
+        return page.format(msg='<h3>만료되었거나 잘못된 링크입니다</h3>'
+                               '<p>담당자에게 새 등록 링크를 요청하세요.</p>'), 400
+    conn.execute('UPDATE oauth_pending SET code=? WHERE state=?', (code, state))
+    conn.commit()
+    conn.close()
+    return page.format(msg='<h3>✅ 카카오 인증 완료</h3>'
+                           '<p>잠시 후 자동으로 등록되고, 카카오톡 \'나와의 채팅\'으로<br>'
+                           '테스트 메시지가 도착합니다. 이 창은 닫으셔도 됩니다.</p>')
+
+
+@app.route('/api/oauth-states/<state>', methods=['GET'])
+def fetch_oauth_code(state):
+    """병원 PC 전용 — 코드 도착 확인. 도착했으면 1회 반환 후 삭제."""
+    if not API_KEY or request.headers.get('X-Api-Key') != API_KEY:
+        abort(403)
+    conn = _get_conn()
+    row = conn.execute('SELECT code FROM oauth_pending WHERE state=?', (state,)).fetchone()
+    if row is None:
+        conn.close()
+        return jsonify({'success': True, 'status': 'unknown'})
+    if not row['code']:
+        conn.close()
+        return jsonify({'success': True, 'status': 'waiting'})
+    conn.execute('DELETE FROM oauth_pending WHERE state=?', (state,))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'status': 'ready', 'code': row['code']})
 
 
 # ─────────────────────────────────────────────── 프론트엔드 서빙
