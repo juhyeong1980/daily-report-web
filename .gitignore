@@ -5,3 +5,6 @@ backend/data/
 *.db
 .env
 server_setup.sh
+paste_blocks.txt
+install_command.txt
+report_url.txt
