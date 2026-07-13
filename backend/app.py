@@ -199,6 +199,14 @@ def _now():
     return datetime.now(KST).isoformat()
 
 
+def _acted_msg(state):
+    if state == 'approved':
+        return '이미 확인하신 보고입니다'
+    if state == 'rejected':
+        return '이미 수정 요청하신 보고입니다'
+    return '이미 종료된 보고입니다'
+
+
 @app.route('/api/approvals', methods=['POST'])
 def start_approval():
     """병원 PC 전용 — 결재 세션 시작(또는 재시작). 순서대로 steps 등록."""
@@ -255,15 +263,14 @@ def approval_action(report_date):
     me = steps[idx]
     if status != 'in_progress':
         conn.close()
-        msg = '이미 종료된 결재입니다' + (' (반려됨)' if status == 'rejected' else ' (완료됨)')
-        return jsonify({'success': False, 'error': msg, 'status': status,
+        return jsonify({'success': False, 'error': _acted_msg(me['state']), 'status': status,
                         'my_state': me['state']}), 409
     if idx != cur:
         conn.close()
         if idx < cur:
-            return jsonify({'success': False, 'error': '이미 결재하셨습니다',
+            return jsonify({'success': False, 'error': _acted_msg(me['state']),
                             'my_state': me['state']}), 409
-        return jsonify({'success': False, 'error': '아직 앞 단계 결재가 끝나지 않았습니다'}), 409
+        return jsonify({'success': False, 'error': '아직 앞 단계 확인이 끝나지 않았습니다'}), 409
 
     me['acted_at'] = _now()
     me['reason'] = reason or None
@@ -285,6 +292,31 @@ def approval_action(report_date):
                     'name': me['name'],
                     'completed': new_status == 'completed',
                     'rejected': new_status == 'rejected'})
+
+
+@app.route('/api/approvals/<report_date>/mystate', methods=['GET'])
+def approval_mystate(report_date):
+    """결재자 뷰어용(공개) — 자기 token의 처리 상태 조회(행위 없음).
+
+    링크를 다시 열었을 때 '이미 확인하신 보고입니다' 등을 먼저 판단하는 용도.
+    """
+    token = (request.args.get('token') or '').strip()
+    if not token:
+        return jsonify({'valid': False})
+    conn = _get_conn()
+    row = conn.execute('SELECT * FROM approvals WHERE report_date=?', (report_date,)).fetchone()
+    conn.close()
+    if row is None:
+        return jsonify({'valid': False})
+    steps = json.loads(row['steps_json'])
+    idx = next((i for i, s in enumerate(steps) if s['token'] == token), None)
+    if idx is None:
+        return jsonify({'valid': False})
+    me = steps[idx]
+    return jsonify({'valid': True, 'my_state': me['state'], 'status': row['status'],
+                    'is_current': row['status'] == 'in_progress' and idx == row['current_seq'],
+                    'is_waiting': row['status'] == 'in_progress' and idx > row['current_seq'],
+                    'acted_msg': _acted_msg(me['state']) if me['state'] != 'pending' else None})
 
 
 @app.route('/api/approvals/<report_date>', methods=['GET'])
