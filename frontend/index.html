@@ -41,12 +41,26 @@
   .bx { font-size:10px; color:var(--muted); margin-top:5px; text-align:center; line-height:1.3; }
   .bcol.today .bx { color:var(--text); font-weight:600; }
   .status { font-size:13px; color:var(--muted); margin-top:40px; text-align:center; }
+  /* 결재 */
+  .approve-bar { position:sticky; bottom:0; background:#fff; border-top:1px solid var(--line);
+                 padding:14px 0 8px; margin-top:20px; }
+  .approve-bar .who { font-size:13px; color:var(--muted); text-align:center; margin-bottom:10px; }
+  .approve-btns { display:flex; gap:10px; }
+  .approve-btns button { flex:1; padding:14px; border:none; border-radius:12px; font-size:15px;
+                         font-weight:700; cursor:pointer; }
+  .btn-ok { background:#1c1c1e; color:#fff; }
+  .btn-no { background:#fff; color:#dc2626; border:1px solid #dc2626 !important; }
+  .approve-msg { text-align:center; font-size:14px; padding:14px; border-radius:12px; margin-top:6px; }
+  .approve-msg.ok { background:#ecfdf5; color:#047857; }
+  .approve-msg.no { background:#fef2f2; color:#b91c1c; }
+  .approve-msg.info { background:#f4f4f5; color:#3f3f46; }
 </style>
 </head>
 <body>
   <h1 id="title">일일매출보고</h1>
   <div class="sub" id="meta"></div>
   <div id="content" style="display:none"></div>
+  <div id="approveBox" style="display:none"></div>
   <div class="status" id="status">불러오는 중...</div>
 
 <script>
@@ -142,9 +156,55 @@ function renderLegacy(r, receivedAt) {
     ${r.memo ? `<div class="sec">메모</div><div class="line">${r.memo}</div>` : ''}`;
 }
 
+// ── 결재(승인/반려) ──
+function renderApprove(reportDate, token) {
+  const box = document.getElementById('approveBox');
+  box.style.display = 'block';
+  box.className = 'approve-bar';
+  box.innerHTML = `
+    <div class="who">이 보고서를 검토하셨으면 결재해 주세요.</div>
+    <div class="approve-btns">
+      <button class="btn-ok" id="apOk">승인</button>
+      <button class="btn-no" id="apNo">반려</button>
+    </div>
+    <div id="apMsg"></div>`;
+  const msg = document.getElementById('apMsg');
+  const send = (action) => {
+    let reason = '';
+    if (action === 'reject') {
+      reason = prompt('반려 사유를 입력하세요 (선택):') || '';
+    }
+    document.getElementById('apOk').disabled = true;
+    document.getElementById('apNo').disabled = true;
+    msg.className = 'approve-msg info'; msg.textContent = '처리 중…';
+    fetch(`/api/approvals/${encodeURIComponent(reportDate)}/action`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, action, reason })
+    }).then(r => r.json()).then(d => {
+      document.querySelector('.approve-btns').style.display = 'none';
+      if (d.success && d.action === 'approve') {
+        msg.className = 'approve-msg ok';
+        msg.textContent = d.completed
+          ? '✅ 최종 승인 완료. 보고가 마감되었습니다.'
+          : '✅ 승인했습니다. 다음 결재자에게 전달됩니다.';
+      } else if (d.success && d.action === 'reject') {
+        msg.className = 'approve-msg no';
+        msg.textContent = '반려 처리되었습니다. 담당자에게 전달됩니다.';
+      } else {
+        msg.className = 'approve-msg no';
+        msg.textContent = '⚠️ ' + (d.error || '처리 실패');
+        // 아직 내 차례가 아니거나 이미 처리한 경우 버튼 상태만 알림
+      }
+    }).catch(e => { msg.className = 'approve-msg no'; msg.textContent = '⚠️ ' + e.message; });
+  };
+  document.getElementById('apOk').onclick = () => send('approve');
+  document.getElementById('apNo').onclick = () => send('reject');
+}
+
 (async function () {
   const q = new URLSearchParams(location.search);
   const k = q.get('k') || '', date = q.get('date');
+  const approveToken = q.get('approve');
   const url = date ? `/api/reports/${date}?k=${encodeURIComponent(k)}`
                    : `/api/reports/latest?k=${encodeURIComponent(k)}`;
   const statusEl = document.getElementById('status');
@@ -156,6 +216,9 @@ function renderLegacy(r, receivedAt) {
     (data.report.today ? renderNew : renderLegacy)(data.report, data.received_at);
     document.getElementById('content').style.display = 'block';
     statusEl.textContent = '';
+    if (approveToken) {
+      renderApprove(date || data.report.report_date, approveToken);
+    }
   } catch (e) {
     statusEl.textContent = '서버에 연결할 수 없습니다.';
   }

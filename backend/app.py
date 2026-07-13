@@ -47,6 +47,16 @@ def _get_conn():
             created_at TEXT NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS approvals (
+            report_date TEXT PRIMARY KEY,
+            steps_json  TEXT NOT NULL,
+            status      TEXT NOT NULL,
+            current_seq INTEGER NOT NULL,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        )
+    """)
     return conn
 
 
@@ -177,6 +187,121 @@ def fetch_oauth_code(state):
     conn.commit()
     conn.close()
     return jsonify({'success': True, 'status': 'ready', 'code': row['code']})
+
+
+# ─────────────────────────────────────────────── 결재선(승인 체인)
+# 병원 PC가 결재 세션을 시작하며 순서대로 결재자 목록(seq/name/token)을 등록한다.
+# 각 결재자는 자기 카톡 링크(?approve=token)로 뷰어를 열어 승인/반려한다.
+# 병원 PC는 상태를 폴링해 다음 결재자에게 카톡을 보내거나(승인) 담당자에게 알린다(반려).
+# 이 서버는 상태만 보관하며 카카오 토큰은 다루지 않는다(push 모델 유지).
+
+def _now():
+    return datetime.now(KST).isoformat()
+
+
+@app.route('/api/approvals', methods=['POST'])
+def start_approval():
+    """병원 PC 전용 — 결재 세션 시작(또는 재시작). 순서대로 steps 등록."""
+    if not API_KEY or request.headers.get('X-Api-Key') != API_KEY:
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    report_date = body.get('report_date')
+    steps = body.get('steps')  # [{seq, name, token}, ...] seq 오름차순
+    if not report_date or not isinstance(steps, list) or not steps:
+        return jsonify({'success': False, 'error': 'report_date/steps 필수'}), 400
+    norm = []
+    for i, s in enumerate(steps):
+        tok = (s.get('token') or '').strip()
+        if len(tok) < 16:
+            return jsonify({'success': False, 'error': f'{i}번 token 형식 오류'}), 400
+        norm.append({'seq': i, 'name': s.get('name', f'{i+1}번'),
+                     'token': tok, 'state': 'pending', 'acted_at': None, 'reason': None})
+    conn = _get_conn()
+    conn.execute(
+        """INSERT INTO approvals (report_date, steps_json, status, current_seq, created_at, updated_at)
+           VALUES (?, ?, 'in_progress', 0, ?, ?)
+           ON CONFLICT(report_date) DO UPDATE SET
+             steps_json=excluded.steps_json, status='in_progress',
+             current_seq=0, updated_at=excluded.updated_at""",
+        (report_date, json.dumps(norm, ensure_ascii=False), _now(), _now()))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'report_date': report_date, 'steps': len(norm)})
+
+
+@app.route('/api/approvals/<report_date>/action', methods=['POST'])
+def approval_action(report_date):
+    """결재자 뷰어에서 호출 — 자기 token으로 승인/반려. 현재 차례만 유효."""
+    body = request.get_json(silent=True) or {}
+    token = (body.get('token') or '').strip()
+    action = body.get('action')
+    reason = (body.get('reason') or '')[:200]
+    if action not in ('approve', 'reject') or not token:
+        return jsonify({'success': False, 'error': '잘못된 요청'}), 400
+
+    conn = _get_conn()
+    row = conn.execute('SELECT * FROM approvals WHERE report_date=?', (report_date,)).fetchone()
+    if row is None:
+        conn.close()
+        return jsonify({'success': False, 'error': '결재 세션이 없습니다'}), 404
+    steps = json.loads(row['steps_json'])
+    status = row['status']
+    cur = row['current_seq']
+    # 이 token이 몇 번 step인지
+    idx = next((i for i, s in enumerate(steps) if s['token'] == token), None)
+    if idx is None:
+        conn.close()
+        return jsonify({'success': False, 'error': '유효하지 않은 결재 링크'}), 403
+    me = steps[idx]
+    if status != 'in_progress':
+        conn.close()
+        msg = '이미 종료된 결재입니다' + (' (반려됨)' if status == 'rejected' else ' (완료됨)')
+        return jsonify({'success': False, 'error': msg, 'status': status,
+                        'my_state': me['state']}), 409
+    if idx != cur:
+        conn.close()
+        if idx < cur:
+            return jsonify({'success': False, 'error': '이미 결재하셨습니다',
+                            'my_state': me['state']}), 409
+        return jsonify({'success': False, 'error': '아직 앞 단계 결재가 끝나지 않았습니다'}), 409
+
+    me['acted_at'] = _now()
+    me['reason'] = reason or None
+    if action == 'approve':
+        me['state'] = 'approved'
+        is_last = (idx == len(steps) - 1)
+        new_status = 'completed' if is_last else 'in_progress'
+        new_cur = cur if is_last else cur + 1
+    else:
+        me['state'] = 'rejected'
+        new_status = 'rejected'
+        new_cur = cur
+    conn.execute(
+        'UPDATE approvals SET steps_json=?, status=?, current_seq=?, updated_at=? WHERE report_date=?',
+        (json.dumps(steps, ensure_ascii=False), new_status, new_cur, _now(), report_date))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'action': action, 'status': new_status,
+                    'name': me['name'],
+                    'completed': new_status == 'completed',
+                    'rejected': new_status == 'rejected'})
+
+
+@app.route('/api/approvals/<report_date>', methods=['GET'])
+def get_approval(report_date):
+    """병원 PC 전용 — 결재 진행 상태 폴링(토큰 제외)."""
+    if not API_KEY or request.headers.get('X-Api-Key') != API_KEY:
+        abort(403)
+    conn = _get_conn()
+    row = conn.execute('SELECT * FROM approvals WHERE report_date=?', (report_date,)).fetchone()
+    conn.close()
+    if row is None:
+        return jsonify({'success': True, 'exists': False})
+    steps = json.loads(row['steps_json'])
+    return jsonify({'success': True, 'exists': True, 'status': row['status'],
+                    'current_seq': row['current_seq'],
+                    'steps': [{'seq': s['seq'], 'name': s['name'], 'state': s['state'],
+                               'acted_at': s['acted_at'], 'reason': s['reason']} for s in steps]})
 
 
 # ─────────────────────────────────────────────── 프론트엔드 서빙
