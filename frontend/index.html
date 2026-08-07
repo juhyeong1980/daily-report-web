@@ -508,7 +508,7 @@ async function loadReport(date) {
 (function () {
   let sx = null, sy = null;
   addEventListener('touchstart', e => {
-    if (e.target.closest && e.target.closest('.fin-box, .approve-bar')) { sx = null; return; }
+    if (e.target.closest && e.target.closest('.fin-box, .approve-bar, #cmpModal')) { sx = null; return; }
     sx = e.touches[0].clientX; sy = e.touches[0].clientY;
   }, { passive: true });
   addEventListener('touchend', e => {
