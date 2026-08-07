@@ -48,6 +48,13 @@ def _get_conn():
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS balances (
+            report_date TEXT PRIMARY KEY,
+            balance     INTEGER,
+            updated_at  TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS approvals (
             report_date TEXT PRIMARY KEY,
             steps_json  TEXT NOT NULL,
@@ -87,15 +94,23 @@ def upsert_report():
 
 
 # ─────────────────────────────────────────────── 조회 (열람 토큰 필요)
+def _get_balance(conn, report_date):
+    row = conn.execute('SELECT balance FROM balances WHERE report_date=?', (report_date,)).fetchone()
+    return row['balance'] if row else None
+
+
 @app.route('/api/reports/latest', methods=['GET'])
 def get_latest():
     _check_view_token()
     conn = _get_conn()
     row = conn.execute('SELECT * FROM reports ORDER BY report_date DESC LIMIT 1').fetchone()
-    conn.close()
     if not row:
+        conn.close()
         return jsonify({'success': False, 'error': '저장된 보고서 없음'}), 404
-    return jsonify({'success': True, 'report': json.loads(row['payload']), 'received_at': row['received_at']})
+    balance = _get_balance(conn, row['report_date'])
+    conn.close()
+    return jsonify({'success': True, 'report': json.loads(row['payload']),
+                    'received_at': row['received_at'], 'balance': balance})
 
 
 @app.route('/api/reports/<report_date>', methods=['GET'])
@@ -103,10 +118,34 @@ def get_report(report_date):
     _check_view_token()
     conn = _get_conn()
     row = conn.execute('SELECT * FROM reports WHERE report_date=?', (report_date,)).fetchone()
-    conn.close()
     if not row:
+        conn.close()
         return jsonify({'success': False, 'error': f'{report_date} 보고서 없음'}), 404
-    return jsonify({'success': True, 'report': json.loads(row['payload']), 'received_at': row['received_at']})
+    balance = _get_balance(conn, report_date)
+    conn.close()
+    return jsonify({'success': True, 'report': json.loads(row['payload']),
+                    'received_at': row['received_at'], 'balance': balance})
+
+
+@app.route('/api/reports/<report_date>/balance', methods=['POST'])
+def set_balance(report_date):
+    """보고자가 폰에서 입력한 잔고 저장(날짜별). 열람 토큰 필요."""
+    _check_view_token()
+    body = request.get_json(silent=True) or {}
+    bal = body.get('balance')
+    if bal is not None:
+        try:
+            bal = int(bal)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': '숫자만 입력하세요'}), 400
+    conn = _get_conn()
+    conn.execute(
+        """INSERT INTO balances (report_date, balance, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT(report_date) DO UPDATE SET balance=excluded.balance, updated_at=excluded.updated_at""",
+        (report_date, bal, datetime.now(KST).isoformat()))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'report_date': report_date, 'balance': bal})
 
 
 @app.route('/api/reports', methods=['GET'])
