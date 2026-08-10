@@ -108,6 +108,13 @@
   .cmp-legend b { color:var(--text); }
   .leg-line { display:inline-block; width:16px; height:0; vertical-align:middle; margin-right:5px; }
   .cmp-foot { text-align:center; font-size:12px; color:var(--muted); margin-top:12px; }
+  /* 분류 상세 3지표 비교표 */
+  .cmp-metrics { width:100%; border-collapse:collapse; margin:2px 0 8px; }
+  .cmp-metrics th { font-size:11px; color:var(--muted); font-weight:600; padding:6px 4px; border-bottom:1px solid var(--line); text-align:right; }
+  .cmp-metrics th:first-child { text-align:left; }
+  .cmp-metrics td { font-size:13px; padding:9px 4px; text-align:right; border-bottom:1px solid #f2f2f4; }
+  .cmp-metrics td.mk { text-align:left; color:var(--muted); font-weight:600; }
+  .cmp-metrics td.dl { font-weight:700; } .cmp-metrics td.dl.up { color:#0a7d34; } .cmp-metrics td.dl.down { color:#dc2626; }
   /* 월 매출 예측 */
   .fc-cards { display:flex; gap:8px; margin-bottom:10px; }
   .fc-cards > div { flex:1; border:1px solid var(--line); border-radius:12px; padding:10px 6px; text-align:center; }
@@ -161,53 +168,89 @@ function closeCmp() { document.getElementById('cmpModal').style.display = 'none'
 function openCmp(metric) {
   const cfg = CMP_CFG[metric];
   const d = ((window._rep || {}).compare || {})[cfg.key];
-  showCmp(d, { useCnt: cfg.use === 'cnt', cumul: cfg.cumul, title: cfg.title });
+  const mo = d ? (+(d.period || '').slice(0, 2) || '') : '';
+  const titleMap = { revenue: `${mo}월 매출 · 작년 대비`, next: `${mo}월 예약 · 작년 대비` };
+  showCmp(d, { useCnt: cfg.use === 'cnt', cumul: cfg.cumul, title: titleMap[metric] || cfg.title });
 }
-// 분류 상세: payload의 compare.categories[분류] 로 작년 대비 수검인원 표시
+// 연도 라벨 (올해/작년 문구 대신 연도만; '예약'·'실적' 등 수식어 유지)
+function yrLabels(d) {
+  const cq = (d.cur_label || '').replace('올해', '').trim();
+  const pq = (d.prev_label || '').replace('작년', '').trim();
+  return { cur: `${d.cur_year}년${cq ? ' ' + cq : ''}`, prev: `${d.prev_year}년${pq ? ' ' + pq : ''}` };
+}
+const eok = v => v >= 100000000 ? (v / 100000000).toFixed(1) + '억'
+  : v >= 10000 ? Math.round(v / 10000).toLocaleString('ko-KR') + '만' : won(v);
+// 분류 상세: compare.categories[분류] → 명수·금액·평균단가 3지표 표
 function openCatCmp(cat) {
   const cats = ((window._rep || {}).compare || {}).categories || {};
-  showCmp(cats[cat], { useCnt: true, cumul: false, title: cat + ' · 작년 대비 수검인원' });
+  showCmp(cats[cat], { useCnt: true, cumul: false, title: cat, metrics: true });
 }
 function showCmp(d, opt) {
   if (!d || !d.days) return;
-  const useCnt = opt.useCnt;
-  let cur = [], prev = [], ac = 0, ap = 0;
+  const useCnt = opt.useCnt, L = yrLabels(d);
+  let cur = [], prev = [], ac = 0, ap = 0; const curB = [], prevB = [];
   d.days.forEach(x => {
     const cv = useCnt ? x.cur_cnt : x.cur_amt, pv = useCnt ? x.prev_cnt : x.prev_amt;
     if (opt.cumul) { ac += cv; ap += pv; cur.push(ac); prev.push(ap); } else { cur.push(cv); prev.push(pv); }
+    curB.push(x.cur_bday === undefined ? true : !!x.cur_bday);
+    prevB.push(x.prev_bday === undefined ? true : !!x.prev_bday);
   });
   const t = d.totals || {};
-  const curTot = useCnt ? t.cur_cnt : t.cur_amt, prevTot = useCnt ? t.prev_cnt : t.prev_amt;
-  const nDays = Math.max(1, d.days.length), unit = useCnt ? '명' : '원';
   const man = v => v >= 10000 ? Math.round(v / 10000).toLocaleString('ko-KR') + '만' : won(v);
-  const fmtBig = v => `${won(v)}${unit}`;
-  const fmtAvg = v => useCnt ? `평균 ${Math.round(v * 10) / 10}명/일` : `평균 ${won(Math.round(v))}원/일`;
-  const pct = prevTot ? (curTot - prevTot) / prevTot * 100 : 0, up = pct >= 0;
-  document.getElementById('cmpTitle').textContent = opt.title;
-  document.getElementById('cmpSub').textContent =
-    `${d.period} · ${d.cur_label} ${d.cur_year} vs ${d.prev_label} ${d.prev_year}`;
-  document.getElementById('cmpBody').innerHTML = `
-    <div class="cmp-yoy">
-      <div class="cur"><div class="yr">${d.cur_label} ${d.cur_year}</div>
-        <div class="val">${fmtBig(curTot)}</div><div class="sub">${fmtAvg(curTot / nDays)}</div></div>
-      <div><div class="yr">${d.prev_label} ${d.prev_year}</div>
-        <div class="val">${fmtBig(prevTot)}</div><div class="sub">${fmtAvg(prevTot / nDays)}</div></div>
-    </div>
-    <div class="cmp-delta ${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}% <span style="color:var(--muted);font-weight:400;">(${d.prev_label} 대비)</span></div>
-    ${cmpChart(d.days.map(x => x.day), cur, prev, useCnt ? won : man)}
+  const chart = cmpChart(d.days.map(x => x.day), cur, prev, useCnt ? won : man, curB, prevB);
+  const legend = `
     <div class="cmp-legend">
-      <span><span class="leg-line" style="border-top:3px solid #1b3a6b;"></span><b>${d.cur_label}</b></span>
-      <span><span class="leg-line" style="border-top:3px dashed #c7c7cc;"></span>${d.prev_label}</span>
-    </div>
-    <div class="cmp-foot">${opt.cumul ? '일별 누적' : '일별'} ${useCnt ? '인원' : '금액'} · ${d.period}</div>`;
+      <span><span class="leg-line" style="border-top:3px solid #1b3a6b;"></span><b>${L.cur}</b></span>
+      <span><span class="leg-line" style="border-top:3px dashed #c7c7cc;"></span>${L.prev}</span>
+    </div>`;
+  document.getElementById('cmpTitle').textContent = opt.title;
+  document.getElementById('cmpSub').textContent = `${d.period} · ${L.cur} vs ${L.prev}`;
+
+  let body;
+  if (opt.metrics) {
+    const cAvg = t.cur_cnt ? Math.round(t.cur_amt / t.cur_cnt) : 0;
+    const pAvg = t.prev_cnt ? Math.round(t.prev_amt / t.prev_cnt) : 0;
+    const dl = (c, p) => { const r = p ? (c - p) / p * 100 : 0, u = r >= 0;
+      return `<td class="dl ${u ? 'up' : 'down'}">${p ? (u ? '▲' : '▼') + Math.abs(r).toFixed(1) + '%' : '–'}</td>`; };
+    const row = (lb, c, p, fmt) => `<tr><td class="mk">${lb}</td><td>${fmt(p)}</td><td>${fmt(c)}</td>${dl(c, p)}</tr>`;
+    body = `
+      <table class="cmp-metrics">
+        <thead><tr><th></th><th>${L.prev}</th><th>${L.cur}</th><th>증감</th></tr></thead>
+        <tbody>
+          ${row('명수', t.cur_cnt, t.prev_cnt, v => won(v) + '명')}
+          ${row('금액', t.cur_amt, t.prev_amt, eok)}
+          ${row('평균단가', cAvg, pAvg, v => won(v) + '원')}
+        </tbody>
+      </table>${chart}${legend}
+      <div class="cmp-foot">일별 인원 · ${d.period}</div>`;
+  } else {
+    const curTot = useCnt ? t.cur_cnt : t.cur_amt, prevTot = useCnt ? t.prev_cnt : t.prev_amt;
+    const nDays = Math.max(1, d.days.length), unit = useCnt ? '명' : '원';
+    const fmtBig = v => `${won(v)}${unit}`;
+    const fmtAvg = v => useCnt ? `평균 ${Math.round(v * 10) / 10}명/일` : `평균 ${won(Math.round(v))}원/일`;
+    const pct = prevTot ? (curTot - prevTot) / prevTot * 100 : 0, up = pct >= 0;
+    body = `
+      <div class="cmp-yoy">
+        <div class="cur"><div class="yr">${L.cur}</div>
+          <div class="val">${fmtBig(curTot)}</div><div class="sub">${fmtAvg(curTot / nDays)}</div></div>
+        <div><div class="yr">${L.prev}</div>
+          <div class="val">${fmtBig(prevTot)}</div><div class="sub">${fmtAvg(prevTot / nDays)}</div></div>
+      </div>
+      <div class="cmp-delta ${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}% <span style="color:var(--muted);font-weight:400;">(${L.prev} 대비)</span></div>
+      ${chart}${legend}
+      <div class="cmp-foot">${opt.cumul ? '일별 누적' : '일별'} ${useCnt ? '인원' : '금액'} · ${d.period}</div>`;
+  }
+  document.getElementById('cmpBody').innerHTML = body;
   document.getElementById('cmpModal').style.display = 'flex';
 }
-function cmpChart(labels, cur, prev, fmtY) {
+function cmpChart(labels, cur, prev, fmtY, curB, prevB) {
   const W = 360, H = 210, pl = 46, pr = 12, pt = 12, pb = 26, n = labels.length;
-  const maxV = Math.max(1, ...cur, ...prev);
+  const bv = (a, B) => a.filter((_, i) => !B || B[i]);
+  const maxV = Math.max(1, ...bv(cur, curB), ...bv(prev, prevB));
   const X = i => pl + (n <= 1 ? 0 : i * (W - pl - pr) / (n - 1)), Y = v => H - pb - (v / maxV) * (H - pt - pb);
-  const path = a => a.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
-  const dots = (a, c) => a.map((v, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="2.6" fill="${c}"/>`).join('');
+  // 비영업일 꼭짓점 생략하고 앞뒤 영업일을 직선 연결(고립점 방지)
+  const path = (a, B) => { let s = '', st = false; a.forEach((v, i) => { if (B && !B[i]) return; s += (st ? 'L' : 'M') + X(i).toFixed(1) + ',' + Y(v).toFixed(1); st = true; }); return s; };
+  const dots = (a, B, c) => a.map((v, i) => (B && !B[i]) ? '' : `<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="2.6" fill="${c}"/>`).join('');
   const grid = [0, 0.5, 1].map(f => { const yy = Y(maxV * f);
     return `<line x1="${pl}" y1="${yy.toFixed(1)}" x2="${W - pr}" y2="${yy.toFixed(1)}" stroke="#eee"/>`
          + `<text x="${pl - 6}" y="${(yy + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#aaa">${fmtY(Math.round(maxV * f))}</text>`; }).join('');
@@ -215,8 +258,8 @@ function cmpChart(labels, cur, prev, fmtY) {
   const xl = labels.map((lb, i) => (i % step === 0 || i === n - 1)
     ? `<text x="${X(i).toFixed(1)}" y="${H - pb + 15}" text-anchor="middle" font-size="9" fill="#aaa">${lb}</text>` : '').join('');
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;">${grid}${xl}
-    <path d="${path(prev)}" fill="none" stroke="#c7c7cc" stroke-width="2" stroke-dasharray="4 3" stroke-linejoin="round"/>
-    <path d="${path(cur)}" fill="none" stroke="#1b3a6b" stroke-width="2.5" stroke-linejoin="round"/>${dots(cur, '#1b3a6b')}</svg>`;
+    <path d="${path(prev, prevB)}" fill="none" stroke="#c7c7cc" stroke-width="2" stroke-dasharray="4 3" stroke-linejoin="round"/>
+    <path d="${path(cur, curB)}" fill="none" stroke="#1b3a6b" stroke-width="2.5" stroke-linejoin="round"/>${dots(cur, curB, '#1b3a6b')}</svg>`;
 }
 const WD = ['일','월','화','수','목','금','토'];
 
@@ -308,23 +351,33 @@ function renderNew(r, receivedAt) {
 
   // 금일 — 분류 클릭 시 작년 대비 수검인원(payload compare.categories)
   const dLabel = p.length === 3 ? `${+p[1]}월${+p[2]}일 일일 검진 현황` : '일일 검진 현황';
-  html += `<div class="sec">${dLabel} <span class="rng">실검진 · 총검사금액 · 분류 클릭 시 작년 대비</span></div>${groupTable(r.today || {}, null, true)}`;
+  html += `<div class="sec">${dLabel}</div>${groupTable(r.today || {}, null, true)}`;
 
-  // 월간 — 예상매출 제목 + 카드
-  const mm = (m.month || r.report_date || '').split('-')[1];
-  html += `<div class="sec">${mm ? +mm + '월 ' : ''}예상 매출</div>`;
-  html += `<div class="proj"><div class="k">예상 매출 = 매출 + 예약</div>
-    <div class="v">${won(pj.amt)}원</div>
-    <div class="u">매출 ${won(sTot.amt)} + 예약 ${won(uTot.amt)}</div></div>`;
+  // 월간 — 예상매출 제목 + 카드(매출+예약+예측=갭반영)
+  const mo = +((m.month || r.report_date || '').split('-')[1]) || '';
+  html += `<div class="sec">${mo ? mo + '월 ' : ''}예상 매출</div>`;
+  const fc = r.forecast || {};
+  if (fc.gap_total != null) {
+    const futRes = (fc.simple_total || 0) - (fc.realized_total || 0);
+    const uplift = (fc.gap_total || 0) - (fc.simple_total || 0);
+    html += `<div class="proj"><div class="k">예상 매출 = 매출 + 예약 + 예측</div>
+      <div class="v">${won(fc.gap_total)}원</div>
+      <div class="u">매출 ${won(fc.realized_total)} + 예약 ${won(futRes)} + 예측 ${won(uplift)}</div></div>`;
+  } else {
+    html += `<div class="proj"><div class="k">예상 매출 = 매출 + 예약</div>
+      <div class="v">${won(pj.amt)}원</div>
+      <div class="u">매출 ${won(sTot.amt)} + 예약 ${won(uTot.amt)}</div></div>`;
+  }
   if (r.forecast && r.forecast.days && r.forecast.days.length) {
     html += `<div class="sec">월 매출 예측</div>${forecastBlock(r.forecast)}`;
   }
 
-  // 이번달 매출
+  // 이번달(당월) 매출
+  const salesTtl = (mo ? mo + '월' : '이번달') + ' 매출';
   if (m.sales && m.sales.groups) {
-    html += `<div class="sec">이번달 매출 <span class="rng">${m.sales_period || ''}</span>${chip('revenue')}</div>${groupTable(m.sales)}`;
+    html += `<div class="sec">${salesTtl} <span class="rng">${m.sales_period || ''}</span>${chip('revenue')}</div>${groupTable(m.sales)}`;
   } else {
-    html += `<div class="line"><span class="lb">이번달 매출 ${m.sales_period || ''}</span>
+    html += `<div class="line"><span class="lb">${salesTtl} ${m.sales_period || ''}</span>
       <span><b>${won(sTot.amt)}</b>원 · ${won(sTot.cnt)}명</span></div>`;
   }
 
@@ -341,8 +394,9 @@ function renderNew(r, receivedAt) {
     html += `<div class="sec">1일 예약금액</div>${bars(r.daily_res)}`;
   }
 
-  // 익월 예약
-  html += `<div class="sec">익월 예약 <span class="rng">${nx.month || ''} ${nx.period || ''}</span>${chip('next')}</div>`;
+  // 익월(다음달) 예약
+  const nMo = +((nx.month || '').split('-')[1]) || '';
+  html += `<div class="sec">${nMo ? nMo + '월' : '익월'} 예약 <span class="rng">${nx.period || ''}</span>${chip('next')}</div>`;
   if (nx.reservation && nx.reservation.groups) {
     html += groupTable(nx.reservation, '예약');
   } else {
