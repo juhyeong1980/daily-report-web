@@ -233,16 +233,17 @@ function showCmp(d, opt) {
       <div class="cmp-foot">일별 인원 · ${d.period}</div>`;
   } else {
     const curTot = useCnt ? t.cur_cnt : t.cur_amt, prevTot = useCnt ? t.prev_cnt : t.prev_amt;
-    const nDays = Math.max(1, d.days.length), unit = useCnt ? '명' : '원';
+    const curN = Math.max(1, t.cur_days || d.days.length), prevN = Math.max(1, t.prev_days || d.days.length);
+    const unit = useCnt ? '명' : '원';
     const fmtBig = v => `${won(v)}${unit}`;
     const fmtAvg = v => useCnt ? `평균 ${Math.round(v * 10) / 10}명/일` : `평균 ${won(Math.round(v))}원/일`;
     const pct = prevTot ? (curTot - prevTot) / prevTot * 100 : 0, up = pct >= 0;
     body = `
       <div class="cmp-yoy">
         <div class="cur"><div class="yr">${L.cur}</div>
-          <div class="val">${fmtBig(curTot)}</div><div class="sub">${fmtAvg(curTot / nDays)}</div></div>
+          <div class="val">${fmtBig(curTot)}</div><div class="sub">${fmtAvg(curTot / curN)}</div></div>
         <div><div class="yr">${L.prev}</div>
-          <div class="val">${fmtBig(prevTot)}</div><div class="sub">${fmtAvg(prevTot / nDays)}</div></div>
+          <div class="val">${fmtBig(prevTot)}</div><div class="sub">${fmtAvg(prevTot / prevN)}</div></div>
       </div>
       <div class="cmp-delta ${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}% <span style="color:var(--muted);font-weight:400;">(${L.prev} 대비)</span></div>
       ${chart}${legend}
