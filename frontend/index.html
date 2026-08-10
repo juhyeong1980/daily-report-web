@@ -105,6 +105,12 @@
   .cmp-legend b { color:var(--text); }
   .leg-line { display:inline-block; width:16px; height:0; vertical-align:middle; margin-right:5px; }
   .cmp-foot { text-align:center; font-size:12px; color:var(--muted); margin-top:12px; }
+  /* 월 매출 예측 */
+  .fc-cards { display:flex; gap:8px; margin-bottom:10px; }
+  .fc-cards > div { flex:1; border:1px solid var(--line); border-radius:12px; padding:10px 6px; text-align:center; }
+  .fc-cards > div.hl { border-color:#1b3a6b; background:#f6f9fd; }
+  .fc-cards .k { font-size:10.5px; color:var(--muted); } .fc-cards .v { font-size:16px; font-weight:700; margin-top:3px; }
+  .fc-cards .s { font-size:10px; color:#0a7d34; margin-top:2px; }
 </style>
 </head>
 <body>
@@ -216,6 +222,46 @@ function groupTable(rep, countLabel) {
     </tbody></table></div>`;
 }
 
+// ── 월 매출 예측 (payload의 r.forecast) ──
+function forecastBlock(d) {
+  const eok = v => v >= 100000000 ? (v / 100000000).toFixed(2) + '억'
+    : v >= 10000 ? Math.round(v / 10000).toLocaleString('ko-KR') + '만' : won(v);
+  const uplift = (d.gap_total || 0) - (d.simple_total || 0);
+  return `<div class="fc-cards">
+      <div><div class="k">실적 누계 (${d.today}일)</div><div class="v">${eok(d.realized_total)}</div></div>
+      <div class="hl"><div class="k">예상 월말 (갭 반영)</div><div class="v">${eok(d.gap_total)}</div><div class="s">+${eok(uplift)} ↑</div></div>
+      <div><div class="k">예약만 기준</div><div class="v">${eok(d.simple_total)}</div></div>
+    </div>
+    ${fcChart(d)}
+    <div class="cmp-legend">
+      <span><span class="leg-line" style="border-top:3px solid #1b3a6b;"></span><b>실적</b></span>
+      <span><span class="leg-line" style="border-top:3px dashed #1b3a6b;"></span>예상(갭)</span>
+      <span><span class="leg-line" style="border-top:2px dotted #c7c7cc;"></span>예약만</span>
+    </div>
+    <div class="cmp-foot">1일~말일 누적 · 남은 영업일 ${d.business_left}일에 일평균 갭 ${won(d.avg_gap)}원 적용</div>`;
+}
+function fcChart(d) {
+  const W = 360, H = 220, pl = 48, pr = 12, pt = 12, pb = 26, n = d.days.length;
+  const all = [...d.realized, ...d.simple, ...d.gap].filter(v => v != null);
+  const maxV = Math.max(1, ...all);
+  const X = i => pl + (n <= 1 ? 0 : i * (W - pl - pr) / (n - 1)), Y = v => H - pb - (v / maxV) * (H - pt - pb);
+  const fp = a => { let s = '', st = false; a.forEach((v, i) => { if (v == null) { st = false; return; } s += (st ? 'L' : 'M') + X(i).toFixed(1) + ',' + Y(v).toFixed(1); st = true; }); return s; };
+  const man = v => v >= 100000000 ? (v / 100000000).toFixed(1) + '억' : Math.round(v / 10000).toLocaleString('ko-KR') + '만';
+  const grid = [0, 0.5, 1].map(f => { const yy = Y(maxV * f);
+    return `<line x1="${pl}" y1="${yy.toFixed(1)}" x2="${W - pr}" y2="${yy.toFixed(1)}" stroke="#eee"/>`
+         + `<text x="${pl - 6}" y="${(yy + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#aaa">${man(maxV * f)}</text>`; }).join('');
+  const step = Math.max(1, Math.ceil(n / 12));
+  const xl = d.days.map((lb, i) => (i % step === 0 || i === n - 1)
+    ? `<text x="${X(i).toFixed(1)}" y="${H - pb + 15}" text-anchor="middle" font-size="9" fill="#aaa">${lb}</text>` : '').join('');
+  const tx = X(d.today - 1).toFixed(1);
+  const marker = `<line x1="${tx}" y1="${pt}" x2="${tx}" y2="${H - pb}" stroke="#dcdce0" stroke-dasharray="2 2"/>`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;">${grid}${xl}${marker}
+    <path d="${fp(d.simple)}" fill="none" stroke="#c7c7cc" stroke-width="2" stroke-dasharray="2 3"/>
+    <path d="${fp(d.gap)}" fill="none" stroke="#1b3a6b" stroke-width="2" stroke-dasharray="5 3"/>
+    <path d="${fp(d.realized)}" fill="none" stroke="#1b3a6b" stroke-width="2.6" stroke-linejoin="round"/>
+  </svg>`;
+}
+
 function bars(items) {
   if (!items || !items.length) return '';
   const max = Math.max(1, ...items.map(it => it.amt));
@@ -248,9 +294,12 @@ function renderNew(r, receivedAt) {
   html += `<div class="sec">수검인원 (실검진 · 총검사금액)${chip('exam')}</div>${groupTable(r.today || {})}`;
 
   // 월간 — 예상매출 카드
-  html += `<div class="proj"><div class="k">예상 매출 · 이번달 매출 + 남은 예약</div>
+  html += `<div class="proj"><div class="k">예상 매출 = 매출 + 예약</div>
     <div class="v">${won(pj.amt)}원</div>
-    <div class="u">${won(pj.cnt)}명 (매출 ${won(sTot.cnt)} + 예약 ${won(uTot.cnt)})</div></div>`;
+    <div class="u">매출 ${won(sTot.amt)} + 예약 ${won(uTot.amt)}</div></div>`;
+  if (r.forecast && r.forecast.days && r.forecast.days.length) {
+    html += `<div class="sec">월 매출 예측 <span class="rng">실적 + 예약 + walk-in 갭</span></div>${forecastBlock(r.forecast)}`;
+  }
 
   // 이번달 매출
   if (m.sales && m.sales.groups) {
