@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>진헬스 일일매출보고</title>
+<title>진헬스건강검진센터 일일보고</title>
 <style>
   :root { --line:#e7e7ea; --muted:#8e8e93; --text:#1c1c1e; --resv:#0369a1; }
   * { box-sizing:border-box; }
@@ -87,6 +87,9 @@
   /* 작년 대비(YoY) 비교 */
   .cmp-chip { font-weight:600; font-size:11px; color:#fff; background:#1b3a6b; padding:2px 9px;
               border-radius:20px; white-space:nowrap; margin-left:6px; cursor:pointer; }
+  tr.drill { cursor:pointer; }
+  tr.drill:active td { background:#f2f5fa; }
+  .chev { color:var(--muted); font-weight:400; }
   #cmpModal { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:100;
               align-items:center; justify-content:center; padding:14px; }
   .cmp-sheet { background:#fff; border-radius:16px; width:100%; max-width:440px; max-height:90vh;
@@ -114,7 +117,7 @@
 </style>
 </head>
 <body>
-  <h1 id="title">일일매출보고</h1>
+  <h1 id="title">진헬스건강검진센터 일일보고</h1>
   <div class="sub" id="meta"></div>
 
   <div class="daybar" id="daybar" style="display:none">
@@ -158,12 +161,20 @@ function closeCmp() { document.getElementById('cmpModal').style.display = 'none'
 function openCmp(metric) {
   const cfg = CMP_CFG[metric];
   const d = ((window._rep || {}).compare || {})[cfg.key];
+  showCmp(d, { useCnt: cfg.use === 'cnt', cumul: cfg.cumul, title: cfg.title });
+}
+// 분류 상세: payload의 compare.categories[분류] 로 작년 대비 수검인원 표시
+function openCatCmp(cat) {
+  const cats = ((window._rep || {}).compare || {}).categories || {};
+  showCmp(cats[cat], { useCnt: true, cumul: false, title: cat + ' · 작년 대비 수검인원' });
+}
+function showCmp(d, opt) {
   if (!d || !d.days) return;
-  const useCnt = cfg.use === 'cnt';
+  const useCnt = opt.useCnt;
   let cur = [], prev = [], ac = 0, ap = 0;
   d.days.forEach(x => {
     const cv = useCnt ? x.cur_cnt : x.cur_amt, pv = useCnt ? x.prev_cnt : x.prev_amt;
-    if (cfg.cumul) { ac += cv; ap += pv; cur.push(ac); prev.push(ap); } else { cur.push(cv); prev.push(pv); }
+    if (opt.cumul) { ac += cv; ap += pv; cur.push(ac); prev.push(ap); } else { cur.push(cv); prev.push(pv); }
   });
   const t = d.totals || {};
   const curTot = useCnt ? t.cur_cnt : t.cur_amt, prevTot = useCnt ? t.prev_cnt : t.prev_amt;
@@ -172,7 +183,7 @@ function openCmp(metric) {
   const fmtBig = v => `${won(v)}${unit}`;
   const fmtAvg = v => useCnt ? `평균 ${Math.round(v * 10) / 10}명/일` : `평균 ${won(Math.round(v))}원/일`;
   const pct = prevTot ? (curTot - prevTot) / prevTot * 100 : 0, up = pct >= 0;
-  document.getElementById('cmpTitle').textContent = cfg.title;
+  document.getElementById('cmpTitle').textContent = opt.title;
   document.getElementById('cmpSub').textContent =
     `${d.period} · ${d.cur_label} ${d.cur_year} vs ${d.prev_label} ${d.prev_year}`;
   document.getElementById('cmpBody').innerHTML = `
@@ -188,7 +199,7 @@ function openCmp(metric) {
       <span><span class="leg-line" style="border-top:3px solid #1b3a6b;"></span><b>${d.cur_label}</b></span>
       <span><span class="leg-line" style="border-top:3px dashed #c7c7cc;"></span>${d.prev_label}</span>
     </div>
-    <div class="cmp-foot">${cfg.cumul ? '일별 누적' : '일별'} ${useCnt ? '인원' : '금액'} · ${d.period}</div>`;
+    <div class="cmp-foot">${opt.cumul ? '일별 누적' : '일별'} ${useCnt ? '인원' : '금액'} · ${d.period}</div>`;
   document.getElementById('cmpModal').style.display = 'flex';
 }
 function cmpChart(labels, cur, prev, fmtY) {
@@ -209,10 +220,17 @@ function cmpChart(labels, cur, prev, fmtY) {
 }
 const WD = ['일','월','화','수','목','금','토'];
 
-function groupTable(rep, countLabel) {
-  const rows = (rep.groups || []).map(g => `
-    <tr><td>${g.category}</td><td>${cell(g.cnt)}</td>
-        <td class="num-amt">${cell(g.amt)}</td><td class="num-amt">${cell(g.avg)}</td></tr>`).join('');
+function groupTable(rep, countLabel, catCmp) {
+  const cats = catCmp ? (((window._rep || {}).compare || {}).categories || {}) : {};
+  const rows = (rep.groups || []).map(g => {
+    const cd = cats[g.category];
+    const has = cd && cd.days && cd.days.length;
+    const attr = has ? ` class="drill" onclick="openCatCmp('${g.category}')"` : '';
+    const chev = has ? ' <span class="chev">›</span>' : '';
+    return `
+    <tr${attr}><td>${g.category}${chev}</td><td>${cell(g.cnt)}</td>
+        <td class="num-amt">${cell(g.amt)}</td><td class="num-amt">${cell(g.avg)}</td></tr>`;
+  }).join('');
   const t = rep.total || { cnt: 0, amt: 0, avg: 0 };
   return `<div class="card"><table>
     <thead><tr><th>구분</th><th>${countLabel || '명수'}</th><th>금액</th><th>평균단가</th></tr></thead>
@@ -237,8 +255,7 @@ function forecastBlock(d) {
       <span><span class="leg-line" style="border-top:3px solid #1b3a6b;"></span><b>실적</b></span>
       <span><span class="leg-line" style="border-top:3px dashed #1b3a6b;"></span>예상(갭)</span>
       <span><span class="leg-line" style="border-top:2px dotted #c7c7cc;"></span>예약만</span>
-    </div>
-    <div class="cmp-foot">1일~말일 누적 · 남은 영업일 ${d.business_left}일에 일평균 갭 ${won(d.avg_gap)}원 적용</div>`;
+    </div>`;
 }
 function fcChart(d) {
   const W = 360, H = 220, pl = 48, pr = 12, pt = 12, pb = 26, n = d.days.length;
@@ -281,8 +298,7 @@ function bars(items) {
 function renderNew(r, receivedAt) {
   window._rep = r;
   const p = (r.report_date || '').split('-');
-  document.getElementById('title').textContent =
-    (p.length === 3 ? `${+p[1]}월${+p[2]}일 ` : '') + '진헬스 일일매출보고';
+  document.getElementById('title').textContent = '진헬스건강검진센터 일일보고';
 
   const m = r.monthly || {}, nx = r.next_month || {};
   const pj = m.projected || { cnt: 0, amt: 0 };
@@ -290,15 +306,18 @@ function renderNew(r, receivedAt) {
   const uTot = (m.upcoming && m.upcoming.total) || m.upcoming_total || {};
   let html = '';
 
-  // 금일
-  html += `<div class="sec">수검인원 (실검진 · 총검사금액)${chip('exam')}</div>${groupTable(r.today || {})}`;
+  // 금일 — 분류 클릭 시 작년 대비 수검인원(payload compare.categories)
+  const dLabel = p.length === 3 ? `${+p[1]}월${+p[2]}일 일일 검진 현황` : '일일 검진 현황';
+  html += `<div class="sec">${dLabel} <span class="rng">실검진 · 총검사금액 · 분류 클릭 시 작년 대비</span></div>${groupTable(r.today || {}, null, true)}`;
 
-  // 월간 — 예상매출 카드
+  // 월간 — 예상매출 제목 + 카드
+  const mm = (m.month || r.report_date || '').split('-')[1];
+  html += `<div class="sec">${mm ? +mm + '월 ' : ''}예상 매출</div>`;
   html += `<div class="proj"><div class="k">예상 매출 = 매출 + 예약</div>
     <div class="v">${won(pj.amt)}원</div>
     <div class="u">매출 ${won(sTot.amt)} + 예약 ${won(uTot.amt)}</div></div>`;
   if (r.forecast && r.forecast.days && r.forecast.days.length) {
-    html += `<div class="sec">월 매출 예측 <span class="rng">실적 + 예약 + walk-in 갭</span></div>${forecastBlock(r.forecast)}`;
+    html += `<div class="sec">월 매출 예측</div>${forecastBlock(r.forecast)}`;
   }
 
   // 이번달 매출
@@ -319,7 +338,7 @@ function renderNew(r, receivedAt) {
 
   // 1일 예약금액 (최근 7일)
   if (r.daily_res && r.daily_res.length) {
-    html += `<div class="sec">1일 예약금액 <span class="rng">최근 7일 · 전일 대비 순증가</span></div>${bars(r.daily_res)}`;
+    html += `<div class="sec">1일 예약금액</div>${bars(r.daily_res)}`;
   }
 
   // 익월 예약
