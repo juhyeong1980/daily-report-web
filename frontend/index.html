@@ -324,8 +324,9 @@ function fcChart(d) {
   const step = Math.max(1, Math.ceil(n / 12));
   const xl = d.days.map((lb, i) => (i % step === 0 || i === n - 1)
     ? `<text x="${X(i).toFixed(1)}" y="${H - pb + 15}" text-anchor="middle" font-size="9" fill="#aaa">${lb}</text>` : '').join('');
-  const tx = X(d.today - 1).toFixed(1);
-  const marker = `<line x1="${tx}" y1="${pt}" x2="${tx}" y2="${H - pb}" stroke="#dcdce0" stroke-dasharray="2 2"/>`;
+  const to = (d.today_ord != null && d.today_ord >= 0) ? d.today_ord : -1;
+  const marker = to >= 0
+    ? `<line x1="${X(to).toFixed(1)}" y1="${pt}" x2="${X(to).toFixed(1)}" y2="${H - pb}" stroke="#dcdce0" stroke-dasharray="2 2"/>` : '';
   const prevPath = d.prev ? `<path d="${fp(d.prev)}" fill="none" stroke="#e08a3c" stroke-width="1.8" stroke-linejoin="round"/>` : '';
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;">${grid}${xl}${marker}
     ${prevPath}
@@ -392,7 +393,7 @@ function renderNew(r, receivedAt) {
   }
 
   // 이번달(당월) 매출
-  const salesTtl = (mo ? mo + '월' : '이번달') + ' 매출';
+  const salesTtl = (mo ? mo + '월' : '이번달') + ' 누적 매출';
   if (m.sales && m.sales.groups) {
     html += `<div class="sec">${salesTtl} <span class="rng">${m.sales_period || ''}</span>${chip('revenue')}</div>${groupTable(m.sales, null, 'categories')}`;
   } else {
