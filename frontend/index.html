@@ -336,27 +336,31 @@ function fcChart(d) {
   </svg>`;
 }
 
-// 1일 예약금액: 표(위) + 선그래프(아래)
-function bars(items, guide) {
+// 1일 예약금액: 표(일별 유입) + 추세 그래프([그날~연말] 예약평균/영업일) + 작년 같은시점 기대선
+function bars(items, trend, guide) {
   if (!items || !items.length) return '';
   const rows = items.map((it, i) => `
     <tr${i === items.length - 1 ? ' class="today"' : ''}>
       <td>${it.date} (${it.weekday})</td><td class="num-amt">${won(it.amt)}원</td></tr>`).join('');
   return `<div class="card"><table class="dr-table">
       <thead><tr><th>날짜</th><th>예약금액</th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="cmp-chart">${resvLineChart(items, guide)}</div></div>`;
+    <div style="font-size:12px;color:var(--muted);margin:8px 2px 2px;">예약 평균 추세 <span style="font-size:11px;">· 그날~연말 예약 ÷ 영업일 · <b style="color:#e03131;">점선=작년 같은시점</b></span></div>
+    <div class="cmp-chart">${resvTrendChart(trend || [], guide)}</div></div>`;
 }
-function resvLineChart(items, guide) {
-  const W = 360, H = 150, pl = 44, pr = 12, pt = 12, pb = 24, n = items.length;
-  const vals = items.map(it => it.amt), maxV = Math.max(1, ...vals, guide || 0);
+function resvTrendChart(pts, guide) {
+  if (!pts.length) return '';
+  const W = 360, H = 150, pl = 44, pr = 12, pt = 12, pb = 24, n = pts.length;
+  const vals = pts.map(it => it.avg), maxV = Math.max(1, ...vals, guide || 0);
   const X = i => pl + (n <= 1 ? 0 : i * (W - pl - pr) / (n - 1)), Y = v => H - pb - (v / maxV) * (H - pt - pb);
   const man = v => v >= 10000 ? Math.round(v / 10000).toLocaleString('ko-KR') + '만' : won(v);
   const path = vals.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
-  const dots = vals.map((v, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="${i === n - 1 ? 3.4 : 2.4}" fill="#1b3a6b"/>`).join('');
+  const dots = vals.map((v, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="${i === n - 1 ? 3.4 : 2.2}" fill="#1b3a6b"/>`).join('');
   const grid = [0, 0.5, 1].map(f => { const yy = Y(maxV * f);
     return `<line x1="${pl}" y1="${yy.toFixed(1)}" x2="${W - pr}" y2="${yy.toFixed(1)}" stroke="#eee"/>`
          + `<text x="${pl - 6}" y="${(yy + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#aaa">${man(maxV * f)}</text>`; }).join('');
-  const xl = items.map((it, i) => `<text x="${X(i).toFixed(1)}" y="${H - pb + 14}" text-anchor="middle" font-size="8.5" fill="#aaa">${it.date}</text>`).join('');
+  const step = Math.max(1, Math.ceil(n / 8));
+  const xl = pts.map((it, i) => (i % step === 0 || i === n - 1)
+    ? `<text x="${X(i).toFixed(1)}" y="${H - pb + 14}" text-anchor="middle" font-size="8.5" fill="#aaa">${it.date}</text>` : '').join('');
   const guideLine = guide ? `<line x1="${pl}" y1="${Y(guide).toFixed(1)}" x2="${W - pr}" y2="${Y(guide).toFixed(1)}" stroke="#e03131" stroke-width="1.5" stroke-dasharray="5 3"/>`
     + `<text x="${W - pr}" y="${(Y(guide) - 4).toFixed(1)}" text-anchor="end" font-size="9" fill="#e03131">기대 ${man(guide)}</text>` : '';
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;">${grid}${xl}${guideLine}
@@ -405,7 +409,7 @@ function renderNew(r, receivedAt) {
 
   // 1일 예약금액 (최근 7일) — 남은 예약 표는 제거
   if (r.daily_res && r.daily_res.length) {
-    html += `<div class="sec">1일 예약금액</div>${bars(r.daily_res, r.daily_res_guide)}`;
+    html += `<div class="sec">1일 예약금액</div>${bars(r.daily_res, r.daily_res_trend, r.daily_res_guide)}`;
   }
 
   // 익월 예약 — 합계 + 작년 '같은 시점(오늘)' 대비
