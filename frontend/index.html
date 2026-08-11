@@ -337,18 +337,18 @@ function fcChart(d) {
 }
 
 // 1일 예약금액: 표(위) + 선그래프(아래)
-function bars(items) {
+function bars(items, guide) {
   if (!items || !items.length) return '';
   const rows = items.map((it, i) => `
     <tr${i === items.length - 1 ? ' class="today"' : ''}>
       <td>${it.date} (${it.weekday})</td><td class="num-amt">${won(it.amt)}원</td></tr>`).join('');
   return `<div class="card"><table class="dr-table">
       <thead><tr><th>날짜</th><th>예약금액</th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="cmp-chart">${resvLineChart(items)}</div></div>`;
+    <div class="cmp-chart">${resvLineChart(items, guide)}</div></div>`;
 }
-function resvLineChart(items) {
+function resvLineChart(items, guide) {
   const W = 360, H = 150, pl = 44, pr = 12, pt = 12, pb = 24, n = items.length;
-  const vals = items.map(it => it.amt), maxV = Math.max(1, ...vals);
+  const vals = items.map(it => it.amt), maxV = Math.max(1, ...vals, guide || 0);
   const X = i => pl + (n <= 1 ? 0 : i * (W - pl - pr) / (n - 1)), Y = v => H - pb - (v / maxV) * (H - pt - pb);
   const man = v => v >= 10000 ? Math.round(v / 10000).toLocaleString('ko-KR') + '만' : won(v);
   const path = vals.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
@@ -357,7 +357,9 @@ function resvLineChart(items) {
     return `<line x1="${pl}" y1="${yy.toFixed(1)}" x2="${W - pr}" y2="${yy.toFixed(1)}" stroke="#eee"/>`
          + `<text x="${pl - 6}" y="${(yy + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#aaa">${man(maxV * f)}</text>`; }).join('');
   const xl = items.map((it, i) => `<text x="${X(i).toFixed(1)}" y="${H - pb + 14}" text-anchor="middle" font-size="8.5" fill="#aaa">${it.date}</text>`).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;">${grid}${xl}
+  const guideLine = guide ? `<line x1="${pl}" y1="${Y(guide).toFixed(1)}" x2="${W - pr}" y2="${Y(guide).toFixed(1)}" stroke="#e03131" stroke-width="1.5" stroke-dasharray="5 3"/>`
+    + `<text x="${W - pr}" y="${(Y(guide) - 4).toFixed(1)}" text-anchor="end" font-size="9" fill="#e03131">기대 ${man(guide)}</text>` : '';
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;">${grid}${xl}${guideLine}
     <path d="${path}" fill="none" stroke="#1b3a6b" stroke-width="2.4" stroke-linejoin="round"/>${dots}</svg>`;
 }
 
@@ -403,7 +405,7 @@ function renderNew(r, receivedAt) {
 
   // 1일 예약금액 (최근 7일) — 남은 예약 표는 제거
   if (r.daily_res && r.daily_res.length) {
-    html += `<div class="sec">1일 예약금액</div>${bars(r.daily_res)}`;
+    html += `<div class="sec">1일 예약금액</div>${bars(r.daily_res, r.daily_res_guide)}`;
   }
 
   // 익월 예약 — 합계 + 작년 '같은 시점(오늘)' 대비
