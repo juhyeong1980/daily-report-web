@@ -344,7 +344,7 @@ function bars(items, trend, guide) {
       <td>${it.date} (${it.weekday})</td><td class="num-amt">${won(it.amt)}원</td></tr>`).join('');
   return `<div class="card"><table class="dr-table">
       <thead><tr><th>날짜</th><th>예약금액</th></tr></thead><tbody>${rows}</tbody></table>
-    <div style="font-size:12px;color:var(--muted);margin:8px 2px 2px;">예약 평균 추세 <span style="font-size:11px;">· 그날~연말 예약 ÷ 영업일 · <b style="color:#e03131;">점선=작년 같은시점</b></span></div>
+    <div style="font-size:12px;color:var(--muted);margin:8px 2px 2px;">예약 유입 추세(이동평균) <span style="font-size:11px;">· 최근 7영업일 평균 · <b style="color:#e03131;">점선=작년 유입 평균</b></span></div>
     <div class="cmp-chart">${resvTrendChart(trend || [], guide)}</div></div>`;
 }
 function resvTrendChart(pts, guide) {
