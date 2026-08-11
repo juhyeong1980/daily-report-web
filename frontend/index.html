@@ -407,11 +407,6 @@ function renderNew(r, receivedAt) {
       <span><b>${won(sTot.amt)}</b>원 · ${won(sTot.cnt)}명</span></div>`;
   }
 
-  // 1일 예약금액 (최근 7일) — 남은 예약 표는 제거
-  if (r.daily_res && r.daily_res.length) {
-    html += `<div class="sec">1일 예약금액</div>${bars(r.daily_res, r.daily_res_trend, r.daily_res_guide)}`;
-  }
-
   // 익월 예약 — 합계 + 작년 '같은 시점(오늘)' 대비
   const nr = r.next_resv || {};
   if (nr.month) {
@@ -422,8 +417,8 @@ function renderNew(r, receivedAt) {
       <div class="card" style="padding:12px 14px;">
         <div style="font-size:21px;font-weight:800;">${won(cur)}원
           <span style="font-size:13px;font-weight:600;color:var(--muted);">· ${won(nr.cur_cnt)}건</span></div>
-        <div style="margin-top:5px;font-size:13px;color:${col};">
-          작년 오늘까지 ${won(prev)}원 · ${up ? '▲' : '▼'} ${won(Math.abs(diff))}원 (${up ? '+' : ''}${pct}%)</div></div>`;
+        <div style="margin-top:8px;font-size:12px;color:var(--muted);">전년 동월 동일 누적</div>
+        <div style="margin-top:2px;font-size:14px;color:${col};">${won(prev)}원 · ${up ? '▲' : '▼'} ${won(Math.abs(diff))}원 (${up ? '+' : ''}${pct}%)</div></div>`;
   } else {
     const nMo = +((nx.month || '').split('-')[1]) || '';
     html += `<div class="line"><span class="lb">${nMo ? nMo + '월' : '익월'} 예약 합계</span>
